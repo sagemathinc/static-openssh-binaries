@@ -83,21 +83,15 @@ jobs:
             base="$(basename "$artifact_dir")"
             arch="${base#ssh-binaries-for-}"   # => x86-64-small, aarch64-small, etc.
 
-            # Ensure the structure contains bin/
-            if [ ! -d "$artifact_dir/bin" ]; then
-              echo "WARN: $artifact_dir has no bin/ directory; skipping"
-              continue
-            fi
-
             # Compose archive names
             PKG_TGZ="openssh-static-${arch}-${TAG}.tar.gz"
             PKG_ZIP="openssh-static-${arch}-${TAG}.zip"
 
-            # Create .tar.gz with bin/ contents
-            tar -C "$artifact_dir" -czf "release/${PKG_TGZ}" bin
+            # Create .tar.gz with contents
+            tar -C "$artifact_dir" -czf "release/${PKG_TGZ}" .
 
-            # Create .zip with bin/ contents
-            (cd "$artifact_dir" && zip -r "../../release/${PKG_ZIP}" bin > /dev/null)
+            # Create .zip with contents
+            (cd "$artifact_dir" && zip -r "../../release/${PKG_ZIP}" . > /dev/null)
 
           done
 
