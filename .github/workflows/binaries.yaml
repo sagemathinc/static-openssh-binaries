@@ -18,7 +18,7 @@ jobs:
     strategy:
       matrix:
         config:
-          - arch: x86_64
+          - arch: x86-64
             config: ARCH=x86-64 PREFIX=/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
             description: x86_64-small
 
