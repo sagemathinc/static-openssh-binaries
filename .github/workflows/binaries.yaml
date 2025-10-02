@@ -71,10 +71,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -x
           TAG="${GITHUB_REF_NAME}"   # e.g. v1.2.3 or 2025-10-01c
-          mkdir -p release
+          ROOT="${GITHUB_WORKSPACE}"
+          RELEASE_DIR="${ROOT}/release"
+          STAGE_DIR="${ROOT}/stage"
 
-          for artifact_dir in dist/*; do
+          mkdir -p "${RELEASE_DIR}" "${STAGE_DIR}"
+
+          for artifact_dir in "${ROOT}"/dist/*; do
             [ -d "$artifact_dir" ] || continue
             base="$(basename "$artifact_dir")"
             arch="${base#ssh-binaries-for-}"     # e.g. x86_64-small or aarch64-small
@@ -88,28 +93,31 @@ jobs:
             fi
 
             # Extract inner tgz into a staging dir
-            stage="stage/${arch}"
+            stage="${STAGE_DIR}/${arch}"
             rm -rf "$stage"
             mkdir -p "$stage"
             tar -xzf "$tgz" -C "$stage"
 
-            # At this point we should have $stage/openssh/{bin,libexec,sbin,etc,var/empty}
+            # Expect $stage/openssh/{bin,libexec,sbin,etc,var/empty}
             if [ ! -d "$stage/openssh" ]; then
               echo "ERROR: expected $stage/openssh after extraction"
               exit 1
             fi
 
-            # Produce clean archives with just the openssh/ tree + README
             PKG_BASE="openssh-static-${arch}-${TAG}"
-            (cd "stage/${arch}" && tar -czf "../../../release/${PKG_BASE}.tar.gz" openssh)
 
+            # Create .tar.gz with the clean openssh/ tree
+            (cd "$stage" && tar -czf "${RELEASE_DIR}/${PKG_BASE}.tar.gz" openssh)
+
+            # Optionally also make a .zip (comment out if you don't want it)
+            (cd "$stage" && zip -r "${RELEASE_DIR}/${PKG_BASE}.zip" openssh > /dev/null)
           done
 
-          # Generate SHA256SUMS for all archives
-          (cd release && sha256sum * > SHA256SUMS.txt)
+          # Generate SHA256SUMS for whatever we created
+          (cd "${RELEASE_DIR}" && sha256sum * > SHA256SUMS.txt)
 
           echo "Release artifacts:"
-          ls -l release
+          ls -l "${RELEASE_DIR}"
 
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
