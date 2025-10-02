@@ -71,27 +71,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"   # e.g. v1.2.3
+          TAG="${GITHUB_REF_NAME}"   # e.g. v1.2.3 or 2025-10-01c
           mkdir -p release
 
-          # For each artifact directory (e.g., "ssh-binaries-for-x86-64-small")
           for artifact_dir in dist/*; do
             [ -d "$artifact_dir" ] || continue
-
-            # Derive a friendly arch label from the artifact name
-            # Expecting artifact names like "ssh-binaries-for-x86-64-small"
             base="$(basename "$artifact_dir")"
-            arch="${base#ssh-binaries-for-}"   # => x86-64-small, aarch64-small, etc.
+            arch="${base#ssh-binaries-for-}"     # e.g. x86_64-small or aarch64-small
 
-            # Compose archive names
-            PKG_TGZ="openssh-static-${arch}-${TAG}.tar.gz"
-            PKG_ZIP="openssh-static-${arch}-${TAG}.zip"
+            # Find the inner tgz (e.g. openssh-V_9_9_P2.tgz)
+            tgz="$(find "$artifact_dir" -maxdepth 1 -name 'openssh-*.tgz' | head -n1 || true)"
+            if [ -z "${tgz:-}" ]; then
+              echo "WARN: no openssh-*.tgz found in $artifact_dir; contents:"
+              ls -la "$artifact_dir"
+              continue
+            fi
 
-            # Create .tar.gz with contents
-            tar -C "$artifact_dir" -czf "release/${PKG_TGZ}" .
+            # Extract inner tgz into a staging dir
+            stage="stage/${arch}"
+            rm -rf "$stage"
+            mkdir -p "$stage"
+            tar -xzf "$tgz" -C "$stage"
 
-            # Create .zip with contents
-            (cd "$artifact_dir" && zip -r "../../release/${PKG_ZIP}" . > /dev/null)
+            # At this point we should have $stage/openssh/{bin,libexec,sbin,etc,var/empty}
+            if [ ! -d "$stage/openssh" ]; then
+              echo "ERROR: expected $stage/openssh after extraction"
+              exit 1
+            fi
+
+            # Produce clean archives with just the openssh/ tree + README
+            PKG_BASE="openssh-static-${arch}-${TAG}"
+            (cd "stage/${arch}" && tar -czf "../../../release/${PKG_BASE}.tar.gz" openssh)
 
           done
 
@@ -109,14 +119,13 @@ jobs:
           body: |
             Automated release for ${{ github.ref_name }}.
 
-            This release includes per-arch archives of static OpenSSH client binaries (both .tar.gz and .zip).
+            This release includes per-arch archives of static OpenSSH client binaries.
             A SHA256SUMS.txt is provided for verification.
           draft: false
           prerelease: false
           generate_release_notes: true
           files: |
             release/*.tar.gz
-            release/*.zip
             release/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
