@@ -5,44 +5,25 @@ on:
   push:
     branches:
       - ci
+    tags:
+      - '*'        # build & release on any tag push, e.g. v1.2.3
   schedule:
     - cron: "0 0 * * 0"
+
+permissions:
+  contents: write   # required to create releases
 
 jobs:
   build:
     strategy:
       matrix:
         config:
-          - arch: x86-64
-            config: ARCH=x86-64 PREFIX=/opt/openssh __all__/VERSION=latest
-            description: x86-64
-
-          - arch: x86-64
-            config: ARCH=x86-64 PREFIX=/opt/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
-            description: x86-64-small
-
-          - arch: armv7-eabihf
-            config: ARCH=armv7-eabihf PREFIX=/system/opt/openssh __all__/VERSION=latest
-            description: armv7-eabihf-android
-
-          - arch: armv7-eabihf
-            config: ARCH=armv7-eabihf PREFIX=/opt/openssh __all__/VERSION=latest
-            description: armv7-eabihf
-
-          - arch: armv7-eabihf
-            config: ARCH=armv7-eabihf PREFIX=/opt/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
-            description: armv7-eabihf-small
+          - arch: x86_64
+            config: ARCH=x86-64 PREFIX=/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
+            description: x86_64-small
 
           - arch: aarch64
-            config: ARCH=aarch64 PREFIX=/system/opt/openssh __all__/VERSION=latest
-            description: aarch64-android
-
-          - arch: aarch64
-            config: ARCH=aarch64 PREFIX=/opt/openssh __all__/VERSION=latest
-            description: aarch64
-
-          - arch: aarch64
-            config: ARCH=aarch64 PREFIX=/opt/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
+            config: ARCH=aarch64 PREFIX=/openssh SHRINK=SHRINK_LEVEL_RUNTIME __all__/VERSION=latest
             description: aarch64-small
 
     env:
@@ -55,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y upx
+        run: sudo apt update && sudo apt install -y upx zip
 
       - name: Get number of CPU cores
         uses: SimenB/github-actions-cpu-cores@v2
@@ -72,3 +53,76 @@ jobs:
           name: ssh-binaries-for-${{ matrix.config.description }}
           path: |
             output/${{ matrix.config.arch }}/bin/
+
+  release:
+    name: Create GitHub Release (on tag)
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')   # only run this job for tag pushes
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          # NOTE: keep merge-multiple:false (default) so each artifact has its own subdir
+
+      - name: Package per-arch into archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"   # e.g. v1.2.3
+          mkdir -p release
+
+          # For each artifact directory (e.g., "ssh-binaries-for-x86-64-small")
+          for artifact_dir in dist/*; do
+            [ -d "$artifact_dir" ] || continue
+
+            # Derive a friendly arch label from the artifact name
+            # Expecting artifact names like "ssh-binaries-for-x86-64-small"
+            base="$(basename "$artifact_dir")"
+            arch="${base#ssh-binaries-for-}"   # => x86-64-small, aarch64-small, etc.
+
+            # Ensure the structure contains bin/
+            if [ ! -d "$artifact_dir/bin" ]; then
+              echo "WARN: $artifact_dir has no bin/ directory; skipping"
+              continue
+            fi
+
+            # Compose archive names
+            PKG_TGZ="openssh-static-${arch}-${TAG}.tar.gz"
+            PKG_ZIP="openssh-static-${arch}-${TAG}.zip"
+
+            # Create .tar.gz with bin/ contents
+            tar -C "$artifact_dir" -czf "release/${PKG_TGZ}" bin
+
+            # Create .zip with bin/ contents
+            (cd "$artifact_dir" && zip -r "../../release/${PKG_ZIP}" bin > /dev/null)
+
+          done
+
+          # Generate SHA256SUMS for all archives
+          (cd release && sha256sum * > SHA256SUMS.txt)
+
+          echo "Release artifacts:"
+          ls -l release
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}    # e.g. v1.2.3
+          name: ${{ github.ref_name }}
+          body: |
+            Automated release for ${{ github.ref_name }}.
+
+            This release includes per-arch archives of static OpenSSH client binaries (both .tar.gz and .zip).
+            A SHA256SUMS.txt is provided for verification.
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/*.zip
+            release/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
